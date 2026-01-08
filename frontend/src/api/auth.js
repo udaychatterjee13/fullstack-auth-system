@@ -70,4 +70,46 @@ export const getProfile = async () => {
     return api.get('/profile/');
 };
 
+// ============================================
+// ADMIN API FUNCTIONS
+// ============================================
+
+/**
+ * Get all users (Admin only)
+ * @param {string} [search] - Optional search query
+ * @returns {Promise} Axios response with list of users
+ */
+export const getUsers = async (search = '') => {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    return api.get(`/admin/users/${params}`);
+};
+
+/**
+ * Get a specific user by ID (Admin only)
+ * @param {number} userId - User ID
+ * @returns {Promise} Axios response with user data
+ */
+export const getUser = async (userId) => {
+    return api.get(`/admin/users/${userId}/`);
+};
+
+/**
+ * Update a user (Admin only)
+ * @param {number} userId - User ID
+ * @param {Object} data - User data to update
+ * @returns {Promise} Axios response with updated user data
+ */
+export const updateUser = async (userId, data) => {
+    return api.patch(`/admin/users/${userId}/`, data);
+};
+
+/**
+ * Delete a user (Admin only)
+ * @param {number} userId - User ID
+ * @returns {Promise} Axios response
+ */
+export const deleteUser = async (userId) => {
+    return api.delete(`/admin/users/${userId}/`);
+};
+
 export default api;

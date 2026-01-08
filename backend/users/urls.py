@@ -8,12 +8,21 @@ This module defines the URL patterns for user authentication endpoints:
 - /logout/ : Logout (blacklist refresh token)
 - /token/refresh/ : Refresh access token
 - /health/ : Health check endpoint
+- /admin/users/ : Admin - List all users (with search)
+- /admin/users/<id>/ : Admin - Get/Update/Delete user
 """
 
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .views import RegisterView, ProfileView, LogoutView, HealthCheckView
+from .views import (
+    RegisterView, 
+    ProfileView, 
+    LogoutView, 
+    HealthCheckView,
+    AdminUserListView,
+    AdminUserDetailView,
+)
 
 
 app_name = 'users'
@@ -36,4 +45,9 @@ urlpatterns = [
     
     # Health check endpoint
     path('health/', HealthCheckView.as_view(), name='health'),
+    
+    # Admin endpoints
+    path('admin/users/', AdminUserListView.as_view(), name='admin_user_list'),
+    path('admin/users/<int:pk>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
 ]
+

@@ -296,6 +296,8 @@ class UserSerializer(serializers.ModelSerializer):
             'last_name',
             'full_name',
             'profile_picture',
+            'is_staff',
+            'is_superuser',
             'created_at',
             'updated_at',
         ]
@@ -303,6 +305,8 @@ class UserSerializer(serializers.ModelSerializer):
             'id',
             'username',
             'email',
+            'is_staff',
+            'is_superuser',
             'created_at',
             'updated_at',
         ]
@@ -318,6 +322,59 @@ class UserSerializer(serializers.ModelSerializer):
             str: The full name of the user.
         """
         return obj.get_full_name()
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for admin user management.
+    
+    Allows admins to view and update user information (excluding password).
+    Includes all user fields that admins should be able to see and modify.
+    """
+    
+    full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = User
+        fields = [
+            'id',
+            'username',
+            'email',
+            'first_name',
+            'last_name',
+            'full_name',
+            'is_active',
+            'is_staff',
+            'is_superuser',
+            'created_at',
+            'updated_at',
+            'last_login',
+        ]
+        read_only_fields = [
+            'id',
+            'created_at',
+            'updated_at',
+            'last_login',
+            'is_superuser',  # Only superusers can modify this via Django admin
+        ]
+    
+    def get_full_name(self, obj: User) -> str:
+        """Get the full name of the user."""
+        return obj.get_full_name()
+    
+    def validate_username(self, value: str) -> str:
+        """Validate username for updates."""
+        instance = self.instance
+        if instance and User.objects.filter(username__iexact=value).exclude(pk=instance.pk).exists():
+            raise serializers.ValidationError("A user with that username already exists.")
+        return value.lower()
+    
+    def validate_email(self, value: str) -> str:
+        """Validate email for updates."""
+        instance = self.instance
+        if instance and User.objects.filter(email__iexact=value).exclude(pk=instance.pk).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value.lower()
 
 
 class LoginSerializer(serializers.Serializer):

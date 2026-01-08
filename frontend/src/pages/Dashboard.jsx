@@ -1,14 +1,21 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getProfile } from '../api/auth';
+import { getProfile, getUsers, updateUser, deleteUser } from '../api/auth';
+import bgImage from '../assets/Images/page2-bg.jpg';
 
 const Dashboard = () => {
     const navigate = useNavigate();
     const [user, setUser] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-    const [timeOfDay, setTimeOfDay] = useState(40);
-    const containerRef = useRef(null);
+    const [isAdmin, setIsAdmin] = useState(false);
+
+    // Admin state
+    const [users, setUsers] = useState([]);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [usersLoading, setUsersLoading] = useState(false);
+    const [editingUser, setEditingUser] = useState(null);
+    const [editForm, setEditForm] = useState({});
+    const [message, setMessage] = useState({ type: '', text: '' });
 
     useEffect(() => {
         const fetchProfile = async () => {
@@ -17,6 +24,8 @@ const Dashboard = () => {
             try {
                 const response = await getProfile();
                 setUser(response.data);
+                // Check if user is admin (is_staff or is_superuser)
+                setIsAdmin(response.data.is_staff || response.data.is_superuser);
             } catch (err) {
                 localStorage.removeItem('token');
                 localStorage.removeItem('refreshToken');
@@ -28,26 +37,24 @@ const Dashboard = () => {
         fetchProfile();
     }, [navigate]);
 
+    // Fetch users when admin and search changes
     useEffect(() => {
-        const interval = setInterval(() => {
-            setTimeOfDay((prev) => (prev + 0.2) % 100);
-        }, 100);
-        return () => clearInterval(interval);
-    }, []);
+        if (isAdmin) {
+            fetchUsers();
+        }
+    }, [isAdmin, searchQuery]);
 
-    useEffect(() => {
-        const handleMouseMove = (e) => {
-            if (containerRef.current) {
-                const rect = containerRef.current.getBoundingClientRect();
-                setMousePos({
-                    x: ((e.clientX - rect.left) / rect.width) * 100,
-                    y: ((e.clientY - rect.top) / rect.height) * 100,
-                });
-            }
-        };
-        window.addEventListener('mousemove', handleMouseMove);
-        return () => window.removeEventListener('mousemove', handleMouseMove);
-    }, []);
+    const fetchUsers = async () => {
+        setUsersLoading(true);
+        try {
+            const response = await getUsers(searchQuery);
+            setUsers(response.data.users || []);
+        } catch (err) {
+            setMessage({ type: 'error', text: 'Failed to load users.' });
+        } finally {
+            setUsersLoading(false);
+        }
+    };
 
     const handleLogout = () => {
         localStorage.removeItem('token');
@@ -55,31 +62,58 @@ const Dashboard = () => {
         navigate('/login');
     };
 
-    const sunY = Math.sin((timeOfDay / 100) * Math.PI) * 60 + 20;
-    const sunX = timeOfDay;
+    const handleSearch = (e) => {
+        setSearchQuery(e.target.value);
+    };
 
-    // Sun is visible from 5% to 95% (rises and sets)
-    const sunVisible = timeOfDay > 5 && timeOfDay < 95;
-    const sunOpacity = timeOfDay <= 5 ? timeOfDay / 5
-        : timeOfDay >= 95 ? (100 - timeOfDay) / 5
-            : 1;
+    const handleEditClick = (userToEdit) => {
+        setEditingUser(userToEdit);
+        setEditForm({
+            username: userToEdit.username,
+            email: userToEdit.email,
+            first_name: userToEdit.first_name,
+            last_name: userToEdit.last_name,
+            is_active: userToEdit.is_active,
+            is_staff: userToEdit.is_staff,
+        });
+        setMessage({ type: '', text: '' });
+    };
 
-    // Moon is only visible during true night (when sun is fully gone)
-    const moonOpacity = timeOfDay <= 5 ? 1
-        : timeOfDay <= 8 ? (8 - timeOfDay) / 3
-            : timeOfDay >= 95 ? (timeOfDay - 95) / 5
-                : timeOfDay >= 92 ? (timeOfDay - 92) / 3
-                    : 0;
+    const handleEditChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        setEditForm(prev => ({
+            ...prev,
+            [name]: type === 'checkbox' ? checked : value
+        }));
+    };
 
-    const isDay = timeOfDay > 10 && timeOfDay < 90;
-    const isDawn = (timeOfDay > 5 && timeOfDay <= 25) || (timeOfDay >= 75 && timeOfDay < 95);
+    const handleEditSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            await updateUser(editingUser.id, editForm);
+            setMessage({ type: 'success', text: 'User updated successfully!' });
+            setEditingUser(null);
+            fetchUsers();
+        } catch (err) {
+            const errorMsg = err.response?.data?.error ||
+                Object.values(err.response?.data || {}).flat().join(', ') ||
+                'Failed to update user.';
+            setMessage({ type: 'error', text: errorMsg });
+        }
+    };
 
-    const getSkyGradient = () => {
-        if (timeOfDay <= 5 || timeOfDay >= 95) return 'linear-gradient(to bottom, #0f0c29, #302b63, #24243e)';
-        if (timeOfDay < 20) return 'linear-gradient(to bottom, #ff7e5f, #feb47b, #86a8e7)';
-        if (timeOfDay < 80) return 'linear-gradient(to bottom, #56ccf2, #2f80ed, #a8edea)';
-        if (timeOfDay < 95) return 'linear-gradient(to bottom, #ff6b6b, #feca57, #5f27cd)';
-        return 'linear-gradient(to bottom, #0f0c29, #302b63, #24243e)';
+    const handleDeleteUser = async (userToDelete) => {
+        if (!window.confirm(`Are you sure you want to delete user "${userToDelete.username}"?`)) {
+            return;
+        }
+        try {
+            await deleteUser(userToDelete.id);
+            setMessage({ type: 'success', text: `User "${userToDelete.username}" deleted successfully!` });
+            fetchUsers();
+        } catch (err) {
+            const errorMsg = err.response?.data?.error || 'Failed to delete user.';
+            setMessage({ type: 'error', text: errorMsg });
+        }
     };
 
     if (isLoading) {
@@ -94,96 +128,40 @@ const Dashboard = () => {
     }
 
     return (
-        <div ref={containerRef} className="min-h-screen relative overflow-hidden transition-all duration-1000" style={{ background: getSkyGradient() }}>
-            {/* Stars */}
-            <div className={`absolute inset-0 transition-opacity duration-1000 ${isDay ? 'opacity-0' : 'opacity-100'}`}>
-                {[...Array(60)].map((_, i) => (
-                    <div key={i} className="absolute w-1 h-1 bg-white rounded-full animate-twinkle"
-                        style={{ left: `${Math.random() * 100}%`, top: `${Math.random() * 50}%`, animationDelay: `${Math.random() * 3}s` }} />
-                ))}
-            </div>
-
-            {/* Sun - only visible during day, fades at sunrise/sunset */}
-            {sunVisible && (
-                <div className="absolute w-24 h-24 rounded-full transition-all duration-500"
-                    style={{
-                        left: `${sunX}%`, top: `${80 - sunY}%`,
-                        opacity: sunOpacity,
-                        background: isDawn ? 'radial-gradient(circle, #ff6b6b 0%, #feca57 50%, transparent 70%)' : 'radial-gradient(circle, #fff9c4 0%, #ffd54f 50%, transparent 70%)',
-                        boxShadow: isDawn ? '0 0 80px #ff6b6b, 0 0 150px #feca57' : '0 0 100px #ffd54f, 0 0 200px #fff9c4',
-                        transform: 'translate(-50%, -50%)',
-                    }} />
-            )}
-
-            {/* Moon - only visible during true night, after sun has set */}
-            {moonOpacity > 0 && (
-                <div className="absolute w-20 h-20 rounded-full transition-all duration-500"
-                    style={{ right: '10%', top: '12%', opacity: moonOpacity, background: 'radial-gradient(circle at 30% 30%, #f5f5f5 0%, #e0e0e0 50%, #bdbdbd 100%)', boxShadow: `0 0 ${40 * moonOpacity}px rgba(255,255,255,0.4)` }} />
-            )}
-
-            {/* Clouds */}
-            <div className="absolute w-full h-full pointer-events-none">
-                <Cloud style={{ left: '5%', top: '12%', animationDuration: '30s' }} />
-                <Cloud style={{ left: '50%', top: '8%', animationDuration: '35s', transform: 'scale(0.9)' }} />
-                <Cloud style={{ left: '75%', top: '18%', animationDuration: '28s', transform: 'scale(1.1)' }} />
-            </div>
-
-            {/* Mountains */}
-            <svg className="absolute bottom-0 w-full" viewBox="0 0 1440 320" preserveAspectRatio="none" style={{ height: '45%' }}>
-                <path fill={isDay ? '#2d5016' : '#1a3009'} className="transition-colors duration-1000"
-                    d="M0,224L48,213.3C96,203,192,181,288,181.3C384,181,480,203,576,218.7C672,235,768,245,864,234.7C960,224,1056,192,1152,181.3C1248,171,1344,181,1392,186.7L1440,192L1440,320L0,320Z" />
-                <path fill={isDay ? '#3d6b1e' : '#2d5016'} className="transition-colors duration-1000"
-                    d="M0,256L60,250.7C120,245,240,235,360,229.3C480,224,600,224,720,234.7C840,245,960,267,1080,261.3C1200,256,1320,224,1380,208L1440,192L1440,320L0,320Z" />
-                <path fill={isDay ? '#4a7c23' : '#3d6b1e'} className="transition-colors duration-1000"
-                    d="M0,288L80,282.7C160,277,320,267,480,272C640,277,800,299,960,293.3C1120,288,1280,256,1360,240L1440,224L1440,320L0,320Z" />
-            </svg>
-
-            {/* Trees */}
-            <div className="absolute bottom-0 w-full flex justify-around items-end" style={{ height: '28%' }}>
-                {[80, 65, 95, 70, 88, 60, 75].map((h, i) => (
-                    <Tree key={i} height={`${h}%`} color={isDay ? (i % 2 ? '#22543d' : '#1a472a') : (i % 2 ? '#153726' : '#0d2818')} />
-                ))}
-            </div>
-
-            {/* Ground */}
-            <div className="absolute bottom-0 w-full h-20 transition-colors duration-1000" style={{ background: isDay ? '#3d6b1e' : '#2d4a16' }} />
-
-            {/* Birds (daytime) */}
-            <div className={`absolute inset-0 transition-opacity duration-1000 ${isDay ? 'opacity-100' : 'opacity-0'}`}>
-                {[...Array(5)].map((_, i) => (
-                    <div key={i} className="absolute animate-bird" style={{ left: `${10 + i * 15}%`, top: `${15 + Math.random() * 20}%`, animationDelay: `${i * 2}s`, animationDuration: `${15 + Math.random() * 10}s` }}>
-                        <svg width="30" height="15" viewBox="0 0 30 15">
-                            <path d="M0,8 Q7,0 15,8 Q23,0 30,8" stroke="#333" strokeWidth="2" fill="none" />
-                        </svg>
-                    </div>
-                ))}
-            </div>
-
-            {/* Fireflies */}
-            <div className={`absolute inset-0 transition-opacity duration-1000 ${isDay ? 'opacity-0' : 'opacity-100'}`}>
-                {[...Array(20)].map((_, i) => (
-                    <div key={i} className="absolute w-2 h-2 bg-yellow-300 rounded-full animate-firefly"
-                        style={{ left: `${15 + Math.random() * 70}%`, top: `${45 + Math.random() * 45}%`, animationDelay: `${Math.random() * 4}s`, animationDuration: `${3 + Math.random() * 2}s` }} />
-                ))}
-            </div>
-
-            {/* Mouse glow effect */}
-            <div className="fixed w-8 h-8 rounded-full pointer-events-none mix-blend-screen opacity-40 transition-all duration-75"
-                style={{ left: `${mousePos.x}%`, top: `${mousePos.y}%`, transform: 'translate(-50%, -50%)', background: 'radial-gradient(circle, rgba(255,255,255,0.9) 0%, transparent 70%)', boxShadow: '0 0 30px rgba(255,255,255,0.6)' }} />
+        <div
+            className="min-h-screen relative overflow-hidden"
+            style={{
+                backgroundImage: `url(${bgImage})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat',
+                backgroundAttachment: 'fixed',
+            }}
+        >
+            {/* Dark overlay */}
+            <div className="absolute inset-0 bg-black/40"></div>
 
             {/* Dashboard Content */}
             <div className="relative z-10 min-h-screen p-4 md:p-8">
                 {/* Header */}
-                <div className="flex justify-between items-center mb-8">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                     <div className="flex items-center space-x-3">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-green-400 to-emerald-600 flex items-center justify-center shadow-lg">
+                        <div className={`w-12 h-12 rounded-full ${isAdmin ? 'bg-gradient-to-br from-purple-400 to-purple-600' : 'bg-gradient-to-br from-green-400 to-emerald-600'} flex items-center justify-center shadow-lg`}>
                             <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                                {isAdmin ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                                )}
                             </svg>
                         </div>
                         <div>
-                            <h1 className="text-2xl font-bold text-white drop-shadow-lg" style={{ fontFamily: 'Georgia, serif' }}>Dashboard</h1>
-                            <p className="text-white/80 text-sm">Welcome to your space</p>
+                            <h1 className="text-2xl font-bold text-white drop-shadow-lg" style={{ fontFamily: 'Georgia, serif' }}>
+                                {isAdmin ? 'Admin Dashboard' : 'Dashboard'}
+                            </h1>
+                            <p className="text-white/80 text-sm">
+                                {isAdmin ? 'Manage users and system' : 'Welcome to your space'}
+                            </p>
                         </div>
                     </div>
                     <button onClick={handleLogout}
@@ -195,33 +173,35 @@ const Dashboard = () => {
                     </button>
                 </div>
 
-                {/* Welcome Card */}
-                <div className="max-w-4xl mx-auto">
-                    <div className="bg-white/20 backdrop-blur-lg rounded-3xl p-6 mb-6 border border-white/30 shadow-xl"
-                        style={{ transform: `perspective(1000px) rotateY(${(mousePos.x - 50) * 0.01}deg) rotateX(${(mousePos.y - 50) * -0.01}deg)` }}>
-                        <div className="flex items-center space-x-4">
-                            <div className="w-20 h-20 bg-gradient-to-br from-green-400 to-emerald-600 rounded-2xl flex items-center justify-center text-white text-3xl font-bold shadow-lg">
+                {/* Message Alert */}
+                {message.text && (
+                    <div className={`max-w-6xl mx-auto mb-4 p-4 rounded-xl backdrop-blur-sm ${message.type === 'success' ? 'bg-green-500/30 border border-green-400' : 'bg-red-500/30 border border-red-400'}`}>
+                        <p className="text-white">{message.text}</p>
+                    </div>
+                )}
+
+                <div className="max-w-6xl mx-auto space-y-6">
+                    {/* Welcome Card */}
+                    <div className="bg-white/30 backdrop-blur-lg rounded-3xl p-6 border border-white/30 shadow-xl">
+                        <div className="flex flex-col sm:flex-row items-center sm:items-start space-y-4 sm:space-y-0 sm:space-x-4">
+                            <div className={`w-20 h-20 ${isAdmin ? 'bg-gradient-to-br from-purple-400 to-purple-600' : 'bg-gradient-to-br from-green-400 to-emerald-600'} rounded-2xl flex items-center justify-center text-white text-3xl font-bold shadow-lg flex-shrink-0`}>
                                 {user?.username?.charAt(0).toUpperCase() || 'U'}
                             </div>
-                            <div>
+                            <div className="text-center sm:text-left">
                                 <h2 className="text-3xl font-bold text-white drop-shadow-lg" style={{ fontFamily: 'Georgia, serif' }}>
                                     Hello, {user?.username || 'Friend'}!
                                 </h2>
-                                <p className="text-white/80">Your journey continues here</p>
+                                <p className="text-white/80">
+                                    {isAdmin ? 'You have admin privileges' : 'Your journey continues here'}
+                                </p>
                             </div>
                         </div>
                     </div>
 
-                    {/* Profile Card */}
-                    <div className="bg-white/80 backdrop-blur-lg rounded-3xl p-8 shadow-2xl border border-white/50"
-                        style={{ transform: `perspective(1000px) rotateY(${(mousePos.x - 50) * 0.008}deg) rotateX(${(mousePos.y - 50) * -0.008}deg)` }}>
-
-                        {/* Decorative corners */}
-                        <div className="absolute -top-4 -right-4 w-16 h-16 opacity-20"><LeafPattern /></div>
-                        <div className="absolute -bottom-4 -left-4 w-14 h-14 opacity-20 rotate-180"><LeafPattern /></div>
-
+                    {/* Profile Details Card (for both admin and regular users) */}
+                    <div className="bg-white/50 backdrop-blur-lg rounded-3xl p-6 md:p-8 shadow-2xl border border-white/40">
                         <div className="flex items-center space-x-3 mb-6">
-                            <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
                                 <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                                 </svg>
@@ -229,7 +209,7 @@ const Dashboard = () => {
                             <h3 className="text-xl font-bold text-gray-800" style={{ fontFamily: 'Georgia, serif' }}>Profile Details</h3>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                             <ProfileCard label="User ID" value={user?.id || 'N/A'} icon="🆔" />
                             <ProfileCard label="Username" value={user?.username || 'N/A'} icon="👤" />
                             <ProfileCard label="Email" value={user?.email || 'N/A'} icon="📧" />
@@ -238,15 +218,215 @@ const Dashboard = () => {
                             <ProfileCard label="Status" value="Active" icon="🌿" isStatus />
                         </div>
                     </div>
+
+                    {/* Admin Panel - User Management */}
+                    {isAdmin && (
+                        <div className="bg-white/50 backdrop-blur-lg rounded-3xl p-6 md:p-8 shadow-2xl border border-white/40">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                                <div className="flex items-center space-x-3">
+                                    <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
+                                        <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                                        </svg>
+                                    </div>
+                                    <h3 className="text-xl font-bold text-gray-800" style={{ fontFamily: 'Georgia, serif' }}>
+                                        User Management
+                                    </h3>
+                                </div>
+
+                                {/* Search Bar */}
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        placeholder="Search users..."
+                                        value={searchQuery}
+                                        onChange={handleSearch}
+                                        className="w-full sm:w-64 px-4 py-2 pl-10 bg-white/70 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-500 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 transition-all"
+                                    />
+                                    <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                    </svg>
+                                </div>
+                            </div>
+
+                            {/* Users Table */}
+                            {usersLoading ? (
+                                <div className="text-center py-8">
+                                    <div className="w-8 h-8 border-4 border-purple-400 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full">
+                                        <thead>
+                                            <tr className="text-left text-gray-600 border-b border-gray-200">
+                                                <th className="pb-3 px-2">ID</th>
+                                                <th className="pb-3 px-2">Username</th>
+                                                <th className="pb-3 px-2 hidden sm:table-cell">Email</th>
+                                                <th className="pb-3 px-2 hidden md:table-cell">Name</th>
+                                                <th className="pb-3 px-2">Status</th>
+                                                <th className="pb-3 px-2">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {users.map((u) => (
+                                                <tr key={u.id} className="border-b border-gray-100 hover:bg-white/50 transition-colors">
+                                                    <td className="py-3 px-2 text-gray-800">{u.id}</td>
+                                                    <td className="py-3 px-2">
+                                                        <div className="flex items-center space-x-2">
+                                                            <span className="font-medium text-gray-800">{u.username}</span>
+                                                            {u.is_staff && <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">Staff</span>}
+                                                            {u.is_superuser && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">Super</span>}
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-3 px-2 text-gray-600 hidden sm:table-cell">{u.email}</td>
+                                                    <td className="py-3 px-2 text-gray-600 hidden md:table-cell">{u.full_name || '-'}</td>
+                                                    <td className="py-3 px-2">
+                                                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${u.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                            {u.is_active ? 'Active' : 'Inactive'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="py-3 px-2">
+                                                        <div className="flex space-x-2">
+                                                            <button
+                                                                onClick={() => handleEditClick(u)}
+                                                                className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                                                                title="Edit"
+                                                            >
+                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                                </svg>
+                                                            </button>
+                                                            {!u.is_superuser && u.id !== user?.id && (
+                                                                <button
+                                                                    onClick={() => handleDeleteUser(u)}
+                                                                    className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                                                    title="Delete"
+                                                                >
+                                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                                    </svg>
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    {users.length === 0 && (
+                                        <p className="text-center py-8 text-gray-500">No users found.</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
+
+            {/* Edit User Modal */}
+            {editingUser && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-xl font-bold text-gray-800">Edit User</h3>
+                            <button onClick={() => setEditingUser(null)} className="p-2 hover:bg-gray-100 rounded-full">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleEditSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                                <input
+                                    type="text"
+                                    name="username"
+                                    value={editForm.username || ''}
+                                    onChange={handleEditChange}
+                                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <input
+                                    type="email"
+                                    name="email"
+                                    value={editForm.email || ''}
+                                    onChange={handleEditChange}
+                                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                                    <input
+                                        type="text"
+                                        name="first_name"
+                                        value={editForm.first_name || ''}
+                                        onChange={handleEditChange}
+                                        className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                                    <input
+                                        type="text"
+                                        name="last_name"
+                                        value={editForm.last_name || ''}
+                                        onChange={handleEditChange}
+                                        className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex items-center space-x-6">
+                                <label className="flex items-center space-x-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        name="is_active"
+                                        checked={editForm.is_active || false}
+                                        onChange={handleEditChange}
+                                        className="w-4 h-4 text-purple-600 rounded"
+                                    />
+                                    <span className="text-sm text-gray-700">Active</span>
+                                </label>
+                                <label className="flex items-center space-x-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        name="is_staff"
+                                        checked={editForm.is_staff || false}
+                                        onChange={handleEditChange}
+                                        className="w-4 h-4 text-purple-600 rounded"
+                                    />
+                                    <span className="text-sm text-gray-700">Staff</span>
+                                </label>
+                            </div>
+                            <div className="flex space-x-3 pt-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setEditingUser(null)}
+                                    className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors"
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
-// Components
+// Profile Card Component
 const ProfileCard = ({ label, value, icon, isStatus }) => (
-    <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-xl p-4 border border-emerald-100 hover:shadow-md transition-all duration-300 hover:-translate-y-1 group">
+    <div className="bg-gradient-to-br from-emerald-50/80 to-green-50/80 backdrop-blur-sm rounded-xl p-4 border border-emerald-100/50 hover:shadow-md transition-all duration-300 hover:-translate-y-1 group">
         <div className="flex items-center space-x-2 mb-2">
             <span className="text-lg">{icon}</span>
             <span className="text-sm font-medium text-gray-500">{label}</span>
@@ -260,32 +440,6 @@ const ProfileCard = ({ label, value, icon, isStatus }) => (
             <p className="text-lg font-semibold text-gray-800 truncate group-hover:text-emerald-600 transition-colors">{value}</p>
         )}
     </div>
-);
-
-const Cloud = ({ style }) => (
-    <div className="absolute animate-cloud" style={style}>
-        <svg width="180" height="70" viewBox="0 0 180 70">
-            <ellipse cx="60" cy="45" rx="50" ry="22" fill="rgba(255,255,255,0.75)" />
-            <ellipse cx="100" cy="40" rx="40" ry="20" fill="rgba(255,255,255,0.85)" />
-            <ellipse cx="140" cy="45" rx="35" ry="18" fill="rgba(255,255,255,0.8)" />
-            <ellipse cx="90" cy="28" rx="30" ry="18" fill="rgba(255,255,255,0.9)" />
-        </svg>
-    </div>
-);
-
-const Tree = ({ height, color }) => (
-    <svg width="50" height="100" viewBox="0 0 60 120" style={{ height }} className="transition-colors duration-1000">
-        <polygon points="30,10 55,50 40,50 55,80 38,80 50,110 10,110 22,80 5,80 20,50 5,50" fill={color} />
-        <rect x="25" y="100" width="10" height="20" fill="#4a3728" />
-    </svg>
-);
-
-const LeafPattern = () => (
-    <svg viewBox="0 0 100 100">
-        <path d="M50,10 Q70,30 50,50 Q30,30 50,10" fill="#22c55e" opacity="0.6" />
-        <path d="M30,30 Q50,50 30,70 Q10,50 30,30" fill="#16a34a" opacity="0.5" />
-        <path d="M70,30 Q90,50 70,70 Q50,50 70,30" fill="#22c55e" opacity="0.4" />
-    </svg>
 );
 
 export default Dashboard;

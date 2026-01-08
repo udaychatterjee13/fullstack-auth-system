@@ -246,3 +246,159 @@ class HealthCheckView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+class AdminUserListView(generics.ListAPIView):
+    """
+    API view for admins to list and search all users.
+    
+    Endpoint: GET /api/auth/admin/users/
+    Permission: IsAdminUser (requires staff status)
+    
+    Query Parameters:
+        - search (str): Search users by username, email, first_name, or last_name
+    
+    Headers Required:
+        Authorization: Bearer <access_token>
+    
+    Responses:
+        - 200 OK: List of users.
+        - 401 Unauthorized: Invalid or missing token.
+        - 403 Forbidden: User is not staff.
+    """
+    
+    from rest_framework.permissions import IsAdminUser
+    from .serializers import AdminUserSerializer
+    
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAdminUser]
+    
+    def get_queryset(self):
+        """
+        Get queryset with optional search filtering.
+        """
+        from django.db.models import Q
+        
+        queryset = User.objects.all().order_by('-created_at')
+        search = self.request.query_params.get('search', None)
+        
+        if search:
+            queryset = queryset.filter(
+                Q(username__icontains=search) |
+                Q(email__icontains=search) |
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search)
+            )
+        
+        return queryset
+    
+    def list(self, request, *args, **kwargs):
+        """Handle list request with logging."""
+        try:
+            queryset = self.get_queryset()
+            serializer = self.get_serializer(queryset, many=True)
+            
+            logger.info(f"Admin {request.user.username} listed users (count: {queryset.count()})")
+            
+            return Response({
+                'count': queryset.count(),
+                'users': serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Admin user list error: {str(e)}")
+            return Response(
+                {'error': 'Failed to retrieve user list.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    API view for admins to get, update, or delete a specific user.
+    
+    Endpoints:
+        - GET /api/auth/admin/users/<id>/
+        - PUT/PATCH /api/auth/admin/users/<id>/
+        - DELETE /api/auth/admin/users/<id>/
+    
+    Permission: IsAdminUser (requires staff status)
+    
+    Headers Required:
+        Authorization: Bearer <access_token>
+    
+    Responses:
+        - 200 OK: User data or update success.
+        - 204 No Content: User deleted successfully.
+        - 400 Bad Request: Validation errors.
+        - 401 Unauthorized: Invalid or missing token.
+        - 403 Forbidden: User is not staff or trying to delete self.
+        - 404 Not Found: User not found.
+    """
+    
+    from rest_framework.permissions import IsAdminUser
+    from .serializers import AdminUserSerializer
+    
+    queryset = User.objects.all()
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAdminUser]
+    lookup_field = 'pk'
+    
+    def update(self, request, *args, **kwargs):
+        """Handle user update with logging."""
+        try:
+            instance = self.get_object()
+            partial = kwargs.pop('partial', False)
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            
+            logger.info(f"Admin {request.user.username} updated user: {instance.username}")
+            
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Admin user update error: {str(e)}")
+            if hasattr(serializer, 'errors') and serializer.errors:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Failed to update user.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    def destroy(self, request, *args, **kwargs):
+        """Handle user deletion with safety checks."""
+        try:
+            instance = self.get_object()
+            
+            # Prevent admin from deleting themselves
+            if instance.pk == request.user.pk:
+                return Response(
+                    {'error': 'You cannot delete your own account.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Prevent deleting superusers (only via Django admin)
+            if instance.is_superuser:
+                return Response(
+                    {'error': 'Superusers can only be deleted via Django admin.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            username = instance.username
+            self.perform_destroy(instance)
+            
+            logger.info(f"Admin {request.user.username} deleted user: {username}")
+            
+            return Response(
+                {'message': f'User {username} has been deleted.'},
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Admin user delete error: {str(e)}")
+            return Response(
+                {'error': 'Failed to delete user.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
